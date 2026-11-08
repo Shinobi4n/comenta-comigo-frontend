@@ -4,6 +4,6 @@ Interface em Next.js da plataforma Comenta Comigo, uma plataforma para opinar so
 
 ## Integrantes
 - Ruan Araujo dos Santos
-- Williane Darline
+- Williane Darline Fernandes Lima
 
 ## Tecnologias
