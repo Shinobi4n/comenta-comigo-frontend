@@ -1,74 +1,99 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
+import { useUserStore } from '@/store/userStore';
 
 function ObraDetalhesConteudo() {
   const params = useParams();
   const rawId = params?.id;
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
 
-  const [obra, setObra] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [erro, setErro] = useState('');
+  const queryClient = useQueryClient();
 
-  // Estado local da seção de comentários
-  const [comentarios, setComentarios] = useState([]);
-  const [autor, setAutor] = useState('');
-  const [nota, setNota] = useState('5');
+  const usuario = useUserStore((state) => state.usuario);
+
   const [texto, setTexto] = useState('');
   const [avisoComentario, setAvisoComentario] = useState('');
+  const [erroComentario, setErroComentario] = useState('');
 
-  useEffect(() => {
-    if (!id) {
-      setLoading(false);
+  // Busca os dados da obra
+  const {
+    data: obra,
+    isLoading: carregandoObra,
+    error: erroObra,
+  } = useQuery({
+    queryKey: ['obra', id],
+    queryFn: async () => {
+      const response = await api.get(`/obras/${id}`);
+      return response.data;
+    },
+    enabled: !!id,
+  });
+
+  // Busca os comentários salvos no banco
+  const {
+    data: comentarios = [],
+    isLoading: carregandoComentarios,
+    isError: falhaComentarios,
+  } = useQuery({
+    queryKey: ['comentarios', id],
+    queryFn: async () => {
+      const response = await api.get(`/obras/${id}/comentarios`);
+      return Array.isArray(response.data) ? response.data : [];
+    },
+    enabled: !!id,
+  });
+
+  // Envia um novo comentário ao back-end
+  const adicionarComentario = useMutation({
+    mutationFn: async (dados) => {
+      return await api.post(`/obras/${id}/comentarios`, dados);
+    },
+    onSuccess: async () => {
+      setTexto('');
+      setErroComentario('');
+      setAvisoComentario('Comentário publicado com sucesso!');
+
+      await queryClient.invalidateQueries({
+        queryKey: ['comentarios', id],
+      });
+    },
+    onError: (error) => {
+      setErroComentario(
+        error.response?.data?.message ||
+        `Não foi possível publicar o comentário${error.response ? ` (HTTP ${error.response.status})` : '. Verifique sua conexão.'}`
+      );
+      setAvisoComentario('');
+    },
+  });
+
+  async function handleAdicionarComentario(e) {
+    e.preventDefault();
+
+    setAvisoComentario('');
+    setErroComentario('');
+
+    if (!usuario?.id) {
+      setErroComentario('Você precisa entrar na sua conta para comentar.');
       return;
     }
 
-    async function carregarObra() {
-      try {
-        setLoading(true);
-        setErro('');
-        const response = await api.get(`/obras/${id}`);
-        setObra(response.data);
-      } catch (e) {
-        if (e.response) {
-          setErro(`Erro ao carregar obra (HTTP ${e.response.status}).`);
-        } else if (e.request) {
-          setErro('Sem resposta do servidor (http://localhost:8080).');
-        } else {
-          setErro(`Erro: ${e.message}`);
-        }
-        console.error('Erro GET /obras/:id:', e.response || e);
-      } finally {
-        setLoading(false);
-      }
+    if (!texto.trim()) {
+      setErroComentario('Escreva seu comentário antes de publicar.');
+      return;
     }
 
-    carregarObra();
-  }, [id]);
-
-  function handleAdicionarComentarioLocal(e) {
-    e.preventDefault();
-    if (!texto.trim()) return;
-
-    const novoComentario = {
-      id: Date.now(),
-      autor: autor.trim() || 'Leitor(a)',
-      nota: Number(nota),
+    await adicionarComentario.mutateAsync({
       texto: texto.trim(),
-    };
-
-    setComentarios((prev) => [novoComentario, ...prev]);
-    setTexto('');
-    setAvisoComentario(
-      'Comentário adicionado localmente. Assim que conectarmos o endpoint do backend, ele será salvo no banco.'
-    );
+      usuarioId: usuario.id,
+    }).catch(() => {});
   }
 
-  if (loading) {
+  if (carregandoObra) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-12 text-slate-600">
         Carregando detalhes da obra...
@@ -76,11 +101,11 @@ function ObraDetalhesConteudo() {
     );
   }
 
-  if (erro || !obra) {
+  if (erroObra || !obra) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-12">
         <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-700">
-          {erro || 'Obra não encontrada.'}
+          Não foi possível carregar a obra.
         </p>
         <Link
           href="/obras"
@@ -101,7 +126,6 @@ function ObraDetalhesConteudo() {
         ← Voltar para o catálogo
       </Link>
 
-      {/* Cartão da obra em tema claro e editorial */}
       <section className="flex flex-col gap-8 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:flex-row sm:p-8">
         {obra.capaUrl ? (
           <img
@@ -120,6 +144,7 @@ function ObraDetalhesConteudo() {
             <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-700">
               {obra.tipo}
             </span>
+
             {obra.anoLancamento && (
               <span className="text-sm font-medium text-slate-500">
                 {obra.anoLancamento}
@@ -135,6 +160,7 @@ function ObraDetalhesConteudo() {
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
               Sinopse
             </h2>
+
             <p className="mt-2 text-base leading-7 text-slate-700">
               {obra.sinopse || 'Nenhuma sinopse cadastrada para esta obra.'}
             </p>
@@ -142,9 +168,11 @@ function ObraDetalhesConteudo() {
         </div>
       </section>
 
-      {/* Seção de comentários clara */}
       <section className="mt-8 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-        <h2 className="text-xl font-bold text-slate-900">Comentários e Resenhas</h2>
+        <h2 className="text-xl font-bold text-slate-900">
+          Comentários e Resenhas
+        </h2>
+
         <p className="mt-1 text-sm text-slate-500">
           Compartilhe sua opinião e leia o que outras pessoas acharam.
         </p>
@@ -155,43 +183,32 @@ function ObraDetalhesConteudo() {
           </p>
         )}
 
-        <form onSubmit={handleAdicionarComentarioLocal} className="mt-6 space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                Seu nome / usuário
-              </label>
-              <input
-                type="text"
-                value={autor}
-                onChange={(e) => setAutor(e.target.value)}
-                placeholder="Ex.: Willyanne"
-                className="w-full rounded-xl border border-slate-300 bg-slate-50/60 px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-purple-500 focus:bg-white focus:outline-none"
-              />
-            </div>
+        {erroComentario && (
+          <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700">
+            {erroComentario}
+          </p>
+        )}
 
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                Avaliação
-              </label>
-              <select
-                value={nota}
-                onChange={(e) => setNota(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-slate-50/60 px-3.5 py-2.5 text-sm text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none"
-              >
-                <option value="5">5 ★ — Excelente</option>
-                <option value="4">4 ★ — Muito bom</option>
-                <option value="3">3 ★ — Bom</option>
-                <option value="2">2 ★ — Regular</option>
-                <option value="1">1 ★ — Fraco</option>
-              </select>
-            </div>
+        <form onSubmit={handleAdicionarComentario} className="mt-6 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+              Seu nome / usuário
+            </label>
+
+            <input
+              type="text"
+              value={usuario?.nome || ''}
+              readOnly
+              placeholder="Entre na sua conta"
+              className="w-full rounded-xl border border-slate-300 bg-slate-100 px-3.5 py-2.5 text-sm text-slate-700"
+            />
           </div>
 
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-slate-700">
               Seu comentário
             </label>
+
             <textarea
               rows={4}
               required
@@ -204,14 +221,29 @@ function ObraDetalhesConteudo() {
 
           <button
             type="submit"
-            className="rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-95"
+            disabled={adicionarComentario.isPending}
+            className="rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-95 disabled:opacity-60"
           >
-            Publicar comentário
+            {adicionarComentario.isPending
+              ? 'Publicando...'
+              : 'Publicar comentário'}
           </button>
         </form>
 
         <div className="mt-8 space-y-4 border-t border-slate-200 pt-6">
-          {comentarios.length === 0 ? (
+          <h3 className="text-sm font-bold text-slate-800">
+            Comentários publicados
+          </h3>
+
+          {carregandoComentarios ? (
+            <p className="text-sm text-slate-500">
+              Carregando comentários...
+            </p>
+          ) : falhaComentarios ? (
+            <p className="text-sm text-rose-600">
+              Não foi possível carregar os comentários.
+            </p>
+          ) : comentarios.length === 0 ? (
             <p className="text-sm text-slate-500">
               Nenhum comentário publicado ainda. Seja a primeira pessoa a comentar!
             </p>
@@ -223,12 +255,16 @@ function ObraDetalhesConteudo() {
               >
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-bold text-slate-900">
-                    {item.autor}
+                    {item.usuario?.nome || 'Usuário'}
                   </span>
-                  <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800">
-                    {item.nota} / 5 ★
+
+                  <span className="text-xs text-slate-500">
+                    {item.dataCriacao
+                      ? new Date(item.dataCriacao).toLocaleDateString('pt-BR')
+                      : ''}
                   </span>
                 </div>
+
                 <p className="mt-2.5 text-sm leading-6 text-slate-700">
                   {item.texto}
                 </p>
