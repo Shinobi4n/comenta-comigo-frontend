@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 
 const FORM_INICIAL = {
@@ -13,58 +14,123 @@ const FORM_INICIAL = {
 };
 
 export default function ObrasPage() {
-  const [obras, setObras] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [erro, setErro] = useState('');
+  const queryClient = useQueryClient();
+
   const [mensagem, setMensagem] = useState('');
+  const [erro, setErro] = useState('');
 
   const [form, setForm] = useState(FORM_INICIAL);
   const [editandoId, setEditandoId] = useState(null);
-  const [salvando, setSalvando] = useState(false);
 
-  async function carregarObras() {
-    try {
-      setLoading(true);
-      setErro('');
+  // Busca as obras utilizando TanStack Query
+  const {
+    data: obrasData = [],
+    isLoading: loading,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: ['obras'],
+    queryFn: async () => {
       const response = await api.get('/obras');
-      setObras(Array.isArray(response.data) ? response.data : []);
-    } catch (e) {
-      if (e.response) {
-        setErro(`Falha ao carregar catálogo (HTTP ${e.response.status}).`);
-      } else if (e.request) {
-        setErro(
-          'Não foi possível conectar ao backend em http://localhost:8080. Verifique se o Spring Boot está rodando e o CORS está liberado.'
-        );
-      } else {
-        setErro(`Erro inesperado: ${e.message}`);
-      }
-      console.error('Erro GET /obras:', e.response || e);
-    } finally {
-      setLoading(false);
-    }
-  }
+      return Array.isArray(response.data) ? response.data : [];
+    },
+  });
 
-  useEffect(() => {
-    carregarObras();
-  }, []);
+  const obras = obrasData;
+
+  // Cadastro e edição de obras
+  const salvarObraMutation = useMutation({
+    mutationFn: async ({ payload, id }) => {
+      if (id) {
+        return await api.put(`/obras/${id}`, payload);
+      }
+
+      return await api.post('/obras', payload);
+    },
+    onSuccess: async (_, variables) => {
+      setMensagem(
+        variables.id
+          ? 'Obra atualizada com sucesso!'
+          : 'Obra cadastrada com sucesso!'
+      );
+
+      setErro('');
+      setForm(FORM_INICIAL);
+      setEditandoId(null);
+
+      await queryClient.invalidateQueries({
+        queryKey: ['obras'],
+      });
+    },
+    onError: (e) => {
+      if (e.response?.data?.message) {
+        setErro(e.response.data.message);
+      } else if (e.response) {
+        setErro(`Erro ao salvar obra (HTTP ${e.response.status}).`);
+      } else {
+        setErro('Sem resposta do servidor ao salvar obra.');
+      }
+
+      console.error('Erro ao salvar obra:', e.response || e);
+    },
+  });
+
+  // Exclusão de obras
+  const excluirObraMutation = useMutation({
+    mutationFn: async (id) => {
+      return await api.delete(`/obras/${id}`);
+    },
+    onSuccess: async (_, id) => {
+      setMensagem('Obra removida do catálogo.');
+      setErro('');
+
+      if (editandoId === id) {
+        handleCancelarEdicao();
+      }
+
+      await queryClient.invalidateQueries({
+        queryKey: ['obras'],
+      });
+    },
+    onError: (e) => {
+      setErro(
+        e.response
+          ? `Não foi possível excluir a obra (HTTP ${e.response.status}).`
+          : 'Erro de conexão ao excluir obra.'
+      );
+
+      console.error('Erro DELETE /obras/:id:', e.response || e);
+    },
+  });
 
   function handleChange(e) {
     const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   }
 
   function handleEditar(obra) {
     setEditandoId(obra.id);
     setMensagem('');
     setErro('');
+
     setForm({
       titulo: obra.titulo || '',
       tipo: obra.tipo || 'FILME',
-      anoLancamento: obra.anoLancamento ? String(obra.anoLancamento) : '',
+      anoLancamento: obra.anoLancamento
+        ? String(obra.anoLancamento)
+        : '',
       sinopse: obra.sinopse || '',
       capaUrl: obra.capaUrl || '',
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    });
   }
 
   function handleCancelarEdicao() {
@@ -74,61 +140,31 @@ export default function ObrasPage() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+
     setErro('');
     setMensagem('');
 
     const payload = {
       titulo: form.titulo.trim(),
       tipo: form.tipo,
-      anoLancamento: form.anoLancamento ? Number(form.anoLancamento) : null,
+      anoLancamento: form.anoLancamento
+        ? Number(form.anoLancamento)
+        : null,
       sinopse: form.sinopse.trim() || null,
       capaUrl: form.capaUrl.trim() || null,
     };
 
-    try {
-      setSalvando(true);
-      if (editandoId) {
-        await api.put(`/obras/${editandoId}`, payload);
-        setMensagem('Obra atualizada com sucesso!');
-      } else {
-        await api.post('/obras', payload);
-        setMensagem('Obra cadastrada com sucesso!');
-      }
-      setForm(FORM_INICIAL);
-      setEditandoId(null);
-      await carregarObras();
-    } catch (e) {
-      if (e.response?.data?.message) {
-        setErro(e.response.data.message);
-      } else if (e.response) {
-        setErro(`Erro ao salvar obra (HTTP ${e.response.status}).`);
-      } else {
-        setErro('Sem resposta do servidor ao salvar obra.');
-      }
-      console.error('Erro ao salvar obra:', e.response || e);
-    } finally {
-      setSalvando(false);
-    }
+    await salvarObraMutation.mutateAsync({
+      payload,
+      id: editandoId,
+    }).catch(() => {});
   }
 
   async function handleExcluir(id) {
     setErro('');
     setMensagem('');
-    try {
-      await api.delete(`/obras/${id}`);
-      setMensagem('Obra removida do catálogo.');
-      if (editandoId === id) {
-        handleCancelarEdicao();
-      }
-      await carregarObras();
-    } catch (e) {
-      setErro(
-        e.response
-          ? `Não foi possível excluir a obra (HTTP ${e.response.status}).`
-          : 'Erro de conexão ao excluir obra.'
-      );
-      console.error('Erro DELETE /obras/:id:', e.response || e);
-    }
+
+    await excluirObraMutation.mutateAsync(id).catch(() => {});
   }
 
   return (
@@ -138,6 +174,7 @@ export default function ObrasPage() {
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
             Catálogo de Obras
           </h1>
+
           <p className="mt-1 text-sm text-slate-600">
             Cadastre novas obras, edite informações e abra os detalhes para ler e comentar.
           </p>
@@ -147,7 +184,9 @@ export default function ObrasPage() {
       {/* Formulário de cadastro / edição */}
       <section className="mb-10 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
         <h2 className="text-lg font-bold text-slate-900">
-          {editandoId ? `Editando obra #${editandoId}` : 'Cadastrar nova obra'}
+          {editandoId
+            ? `Editando obra #${editandoId}`
+            : 'Cadastrar nova obra'}
         </h2>
 
         {mensagem && (
@@ -162,12 +201,21 @@ export default function ObrasPage() {
           </p>
         )}
 
+        {isError && !erro && (
+          <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+            {error?.response
+              ? `Falha ao carregar catálogo (HTTP ${error.response.status}).`
+              : 'Não foi possível conectar ao backend em http://localhost:8080. Verifique se o Spring Boot está rodando e o CORS está liberado.'}
+          </p>
+        )}
+
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="sm:col-span-2">
               <label className="mb-1.5 block text-xs font-semibold text-slate-700">
                 Título *
               </label>
+
               <input
                 type="text"
                 name="titulo"
@@ -183,6 +231,7 @@ export default function ObrasPage() {
               <label className="mb-1.5 block text-xs font-semibold text-slate-700">
                 Tipo
               </label>
+
               <select
                 name="tipo"
                 value={form.tipo}
@@ -190,8 +239,9 @@ export default function ObrasPage() {
                 className="w-full rounded-xl border border-slate-300 bg-slate-50/60 px-3.5 py-2.5 text-sm text-slate-900 focus:border-purple-500 focus:bg-white focus:outline-none"
               >
                 <option value="FILME">FILME</option>
+                <option value="SERIE">SÉRIE</option>
                 <option value="LIVRO">LIVRO</option>
-                <option value="SERIE">SERIE</option>
+                <option value="ALBUM">ÁLBUM</option>
               </select>
             </div>
           </div>
@@ -201,6 +251,7 @@ export default function ObrasPage() {
               <label className="mb-1.5 block text-xs font-semibold text-slate-700">
                 Ano de lançamento
               </label>
+
               <input
                 type="number"
                 name="anoLancamento"
@@ -215,6 +266,7 @@ export default function ObrasPage() {
               <label className="mb-1.5 block text-xs font-semibold text-slate-700">
                 URL da capa
               </label>
+
               <input
                 type="text"
                 name="capaUrl"
@@ -230,6 +282,7 @@ export default function ObrasPage() {
             <label className="mb-1.5 block text-xs font-semibold text-slate-700">
               Sinopse
             </label>
+
             <textarea
               name="sinopse"
               rows={3}
@@ -243,10 +296,10 @@ export default function ObrasPage() {
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
-              disabled={salvando}
+              disabled={salvarObraMutation.isPending}
               className="rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-95 disabled:opacity-60"
             >
-              {salvando
+              {salvarObraMutation.isPending
                 ? 'Salvando...'
                 : editandoId
                 ? 'Salvar alterações'
@@ -305,6 +358,7 @@ export default function ObrasPage() {
                       <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700">
                         {obra.tipo}
                       </span>
+
                       {obra.anoLancamento && (
                         <span className="text-xs font-medium text-slate-500">
                           {obra.anoLancamento}
@@ -340,7 +394,8 @@ export default function ObrasPage() {
                     <button
                       type="button"
                       onClick={() => handleExcluir(obra.id)}
-                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+                      disabled={excluirObraMutation.isPending}
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
                     >
                       Excluir
                     </button>
