@@ -5,10 +5,22 @@ export const useUserStore = create(
   persist(
     (set) => ({
       usuario: null,
+      token: null,
 
-      login: (dadosUsuario) => set({ usuario: dadosUsuario }),
+      login: (dados) => {
+        const { token, ...usuario } = dados;
 
-      logout: () => set({ usuario: null }),
+        set({
+          usuario,
+          token: token || null,
+        });
+      },
+
+      logout: () =>
+        set({
+          usuario: null,
+          token: null,
+        }),
     }),
     {
       name: 'comenta-comigo-usuario',
