@@ -14,3 +14,7 @@ export async function solicitarRecuperacao(email) {
   const resposta = await api.post('/auth/recuperar-senha', { email });
   return resposta.data;
 }
+
+export async function fazerLogout() {
+  return api.post('/auth/logout');
+}

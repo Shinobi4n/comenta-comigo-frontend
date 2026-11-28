@@ -1,19 +1,59 @@
+
 'use client';
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { fazerLogin } from '@/services/authService';
+import { useUserStore } from '@/store/userStore';
 
 export default function LoginPage() {
+  const router = useRouter();
+  const login = useUserStore((state) => state.login);
+
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
+  const [carregando, setCarregando] = useState(false);
 
-  function handleLogin(e) {
+  async function handleLogin(e) {
     e.preventDefault();
+    setErro('');
+    setCarregando(true);
 
-    setErro(
-      'O login ainda está sendo conectado ao back-end. Por enquanto, utilize a conta criada pelo cadastro.'
-    );
+    try {
+      const resposta = await fazerLogin({
+        email,
+        senha,
+      });
+
+      if (!resposta?.token) {
+        throw new Error('O servidor não retornou um token de autenticação.');
+      }
+
+      login(resposta);
+
+      router.replace('/obras');
+    } catch (error) {
+      if (error.response?.status === 401) {
+        setErro('E-mail ou senha inválidos.');
+      } else if (error.response?.status === 400) {
+        setErro('Informe um e-mail e uma senha válidos.');
+      } else if (error.response) {
+        setErro(
+          error.response.data?.detail ||
+          error.response.data?.message ||
+          'Não foi possível realizar o login.'
+        );
+      } else {
+        setErro(
+          error.message ||
+          'Não foi possível conectar ao servidor. Verifique se o backend está funcionando.'
+        );
+      }
+    } finally {
+      setCarregando(false);
+    }
   }
 
   return (
@@ -59,7 +99,7 @@ export default function LoginPage() {
           </div>
 
           {erro && (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
               {erro}
             </p>
           )}
@@ -75,9 +115,10 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            className="w-full rounded-lg bg-purple-600 py-3 font-semibold text-white transition hover:bg-purple-700"
+            disabled={carregando}
+            className="w-full rounded-lg bg-purple-600 py-3 font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Entrar
+            {carregando ? 'Entrando...' : 'Entrar'}
           </button>
         </form>
 
